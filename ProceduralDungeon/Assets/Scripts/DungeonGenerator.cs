@@ -8,13 +8,38 @@ using static Utils;
 
 public class DungeonGenerator : MonoBehaviour
 {
-    private class Node
+    public class Node
     {
-        public Vector2 position;
+        // Do not change externally
+        public Vector2 position { get; private set; }
+        // Do not change externally
+        public List<ORIENTATION> mainOrientations { get; private set; } = new List<ORIENTATION>();
+        // Do not change externally
+        public Dictionary<ORIENTATION, List<Node>> secondaryOrientations { get; private set; } = new Dictionary<ORIENTATION, List<Node>>();
 
-        public Node(Vector2 buildingPosition)
+        public Node(Vector2 buildingPosition, ORIENTATION fromOrientation)
         {
             position = buildingPosition;
+            mainOrientations.Add(fromOrientation);
+        }
+
+        public void AddMainPath(ORIENTATION orient)
+        {
+            mainOrientations.Add(orient);
+        }
+
+        public void AddSecondaryPath(ORIENTATION orient, List<Node> secondaryPath)
+        {
+            secondaryOrientations.Add(orient, secondaryPath);
+        }
+
+        public List<ORIENTATION> GetAvailableOrientations()
+        {
+            List<ORIENTATION> available = new List<ORIENTATION>();
+
+            available.AddRange(directionsList.Where(x => x != ORIENTATION.NONE && !mainOrientations.Contains(x) && !secondaryOrientations.Keys.Contains(x)));
+
+            return available;
         }
     }
 
@@ -26,31 +51,32 @@ public class DungeonGenerator : MonoBehaviour
     [Header("Secondary Paths")]
     [SerializeField, Range(1, 10)] private int minRoomsBeforeNewSecondary = 1;
     [SerializeField, Range(1, 10)] private int maxRoomsBeforeNewSecondary = 1;
+    [SerializeField, Range(2, 10)] private int minSecondaryPathLength = 5;
+    [SerializeField, Range(2, 10)] private int maxSecondaryPathLength = 5;
 
     [Header("General Settings")]
+    [SerializeField] private bool failIfTooShort = false;
     [SerializeField, Range(0f, 1f)] private float buildingDirectionChange;
 
     [Header("Debug")]
     [SerializeField, Range(0, 10)] private int debugPaddingSize = 4;
     [SerializeField] private bool printDebug = true;
 
-    private List<ORIENTATION> directionsArray;
+    // Do not change externally
+    public static List<ORIENTATION> directionsList { get; private set; }
 
     private readonly List<Node> mainPath = new List<Node>();
-    private int mainPathLength;
-
-    private Vector2 buildingPosition;
-    private ORIENTATION buildingDirection;
+    private readonly List<List<Node>> secondaryPaths = new List<List<Node>>();
 
     private void Awake()
     {
-        directionsArray = ((ORIENTATION[])Enum.GetValues(typeof(ORIENTATION))).ToList();
+        directionsList = ((ORIENTATION[])Enum.GetValues(typeof(ORIENTATION))).ToList();
 
         if (maxMainPathLength < minMainPathLength)
             maxMainPathLength = minMainPathLength;
 
         if (maxMainPathLength < maxRoomsBeforeNewSecondary)
-            maxMainPathLength = maxRoomsBeforeNewSecondary;
+            maxRoomsBeforeNewSecondary = maxMainPathLength;
 
         if (maxRoomsBeforeNewSecondary < minRoomsBeforeNewSecondary)
             maxRoomsBeforeNewSecondary = minRoomsBeforeNewSecondary;
@@ -63,7 +89,53 @@ public class DungeonGenerator : MonoBehaviour
 
     private void GenerateDungeon()
     {
-        GenerateMainPath();
+        // Main path generation
+
+        mainPath.Clear();
+        int mainPathLength = Random.Range(minMainPathLength, maxMainPathLength + 1);
+
+        Vector3 buildingPosition = new Vector2(0, 0);
+        ORIENTATION buildingDirection = ORIENTATION.NONE;
+
+        bool success = GeneratePath(true, mainPath, mainPathLength, buildingPosition, buildingDirection);
+
+        if (!success) Debug.LogError("Main path failed. Everying stopped");
+
+        // Secondary paths generation
+
+        int currentSecondaryProgressionIndex = Random.Range(minRoomsBeforeNewSecondary, maxRoomsBeforeNewSecondary);
+
+        while (currentSecondaryProgressionIndex < mainPath.Count)
+        {
+            List<ORIENTATION> availableOrientations = mainPath[currentSecondaryProgressionIndex].GetAvailableOrientations();
+
+            if (availableOrientations.Count == 0)
+            {
+                currentSecondaryProgressionIndex++;
+
+                continue;
+            }
+
+            List<Node> secondaryPath = new List<Node>();
+            int secondaryPathLength = Random.Range(minSecondaryPathLength, maxSecondaryPathLength + 1);
+
+            buildingPosition = mainPath[currentSecondaryProgressionIndex].position;
+            buildingDirection = availableOrientations[Random.Range(0, availableOrientations.Count)];
+
+            success = GeneratePath(false, secondaryPath, secondaryPathLength, buildingPosition, buildingDirection, directionsList.Where(x => !availableOrientations.Contains(x)).ToList());
+
+            if (success)
+            {
+                secondaryPaths.Add(secondaryPath);
+
+                // Tell main path we've added a secondary path by telling him he now has a secondary door
+                mainPath[currentSecondaryProgressionIndex].AddSecondaryPath(buildingDirection, secondaryPath);
+
+                currentSecondaryProgressionIndex += Random.Range(minRoomsBeforeNewSecondary, maxRoomsBeforeNewSecondary);
+            }
+            else
+                currentSecondaryProgressionIndex++;
+        }
 
         // Debug printing
         if (printDebug)
@@ -72,26 +144,44 @@ public class DungeonGenerator : MonoBehaviour
         }
     }
 
-    private void GenerateMainPath()
+    private bool GeneratePath(bool isMain, List<Node> pathList, int pathLength, Vector2 startPos, ORIENTATION startDir, List<ORIENTATION> alreadyExploredDirs = null)
     {
-        mainPath.Clear();
-        mainPathLength = Random.Range(minMainPathLength, maxMainPathLength + 1);
+        int pathToBuildRemaining = pathLength;
 
-        buildingPosition = new Vector2(0, 0);
-        int mainPathToBuildRemaining = mainPathLength;
+        Vector2 currentPos = startPos;
+        ORIENTATION currentDir = startDir;
 
-        // First node at (0,0)
-        mainPath.Add(GenerateNode(buildingPosition));
-        mainPathToBuildRemaining--;
+        // Returned int is the amount of rooms we wont be able to place anyway
+        Tuple<int, PossibleBuild> tuple = GetPossibleBuildAmountAndPosDir(pathToBuildRemaining, currentDir, currentPos, alreadyExploredDirs);
 
-        while (mainPathToBuildRemaining > 0)
+        if (failIfTooShort && tuple.Item1 > 0)
+        {
+            return false;
+        }
+
+        if (!isMain)
+        {
+            pathList.Add(GenerateNode(currentPos, OppositeOrientation(currentDir)));
+            pathToBuildRemaining--;
+        }
+
+        while (pathToBuildRemaining > 0)
         {
             // Returned int is the amount of rooms we wont be able to place anyway
-            mainPathToBuildRemaining -= UpdateBuildingPosDir(mainPathToBuildRemaining);
+            tuple = GetPossibleBuildAmountAndPosDir(pathToBuildRemaining, currentDir, currentPos);
+            pathToBuildRemaining -= tuple.Item1;
 
-            mainPath.Add(GenerateNode(buildingPosition));
-            mainPathToBuildRemaining--;
+            currentPos = tuple.Item2.pos;
+            currentDir = tuple.Item2.dir;
+
+            // Tell previous node of new door
+            if (pathList.Count > 0) pathList[pathList.Count - 1].AddMainPath(OppositeOrientation(currentDir));
+
+            pathList.Add(GenerateNode(currentPos, OppositeOrientation(currentDir)));
+            pathToBuildRemaining--;
         }
+
+        return true;
     }
 
     private void PrintMainPath(List<Node> toPrint)
@@ -144,14 +234,28 @@ public class DungeonGenerator : MonoBehaviour
         return source.PadLeft(padLeft).PadRight(length);
     }
 
-    private int UpdateBuildingPosDir(int toBuildRemaining)
+    public struct PossibleBuild
     {
-        Vector2 newBuildingPosition;
-        ORIENTATION newBuildingDirection;
+        public Vector2 pos;
+        public ORIENTATION dir;
 
+        public PossibleBuild(Vector2 newBuildingPosition, ORIENTATION newBuildingDirection)
+        {
+            pos = newBuildingPosition;
+            dir = newBuildingDirection;
+        }
+    }
+
+    private Tuple<int, PossibleBuild> GetPossibleBuildAmountAndPosDir(int toBuildRemaining, ORIENTATION buildOrientPrev, Vector2 buildPosPrev, List<ORIENTATION> alreadyExploredDirections = null)
+    {
         // Ignores already explored directions to avoid exploring one that fails twice
-        List<ORIENTATION> alreadyExploredDirections = new List<ORIENTATION>();
-        alreadyExploredDirections.Add(OppositeOrientation(buildingDirection));
+        if (alreadyExploredDirections == null)
+        {
+            alreadyExploredDirections = new List<ORIENTATION>();
+        }
+
+        alreadyExploredDirections.Add(OppositeOrientation(buildOrientPrev));
+        if (!alreadyExploredDirections.Contains(ORIENTATION.NONE)) alreadyExploredDirections.Add(ORIENTATION.NONE);
 
         // If no direction is possible for requested length pick the longest possible
         Tuple<bool, int> result;
@@ -159,11 +263,14 @@ public class DungeonGenerator : MonoBehaviour
         ORIENTATION fallbackDirection = ORIENTATION.NONE;
         bool fallback = false;
 
+        Vector2 newBuildingPosition;
+        ORIENTATION newBuildingDirection;
+
         do
         {
-            newBuildingDirection = RandomizeBuildingDirection(buildingDirection, alreadyExploredDirections);
+            newBuildingDirection = RandomizeBuildingDirection(buildOrientPrev, alreadyExploredDirections);
             alreadyExploredDirections.Add(newBuildingDirection);
-            newBuildingPosition = MoveIntoDirection(newBuildingDirection);
+            newBuildingPosition = MoveIntoDirection(newBuildingDirection, buildPosPrev);
 
             result = IsPathPossible(new List<Vector2>(), newBuildingPosition, toBuildRemaining);
 
@@ -178,7 +285,7 @@ public class DungeonGenerator : MonoBehaviour
                 break;
             }
 
-            if (alreadyExploredDirections.Count == directionsArray.Count)
+            if (alreadyExploredDirections.Count == directionsList.Count)
             {
                 fallback = true;
 
@@ -189,24 +296,21 @@ public class DungeonGenerator : MonoBehaviour
 
         if (fallback)
         {
-            buildingDirection = fallbackDirection;
-            buildingPosition = MoveIntoDirection(buildingDirection);
+            return new Tuple<int, PossibleBuild>(smallestRemainingDepth, new PossibleBuild(MoveIntoDirection(fallbackDirection, buildPosPrev), fallbackDirection));
         }
         else
         {
-            buildingPosition = newBuildingPosition;
-            buildingDirection = newBuildingDirection;
+            return new Tuple<int, PossibleBuild>(smallestRemainingDepth, new PossibleBuild(newBuildingPosition, newBuildingDirection));
         }
-
-        return smallestRemainingDepth;
     }
 
-    private Node GenerateNode(Vector2 position)
+    private Node GenerateNode(Vector2 position, ORIENTATION orient)
     {
-        return new Node(position);
+        Node n = new Node(position, orient);
+        return n;
     }
 
-    private Vector2 MoveIntoDirection(ORIENTATION buildingDirection)
+    private Vector2 MoveIntoDirection(ORIENTATION buildingDirection, Vector2 buildingPosition)
     {
         switch (buildingDirection)
         {
@@ -214,13 +318,13 @@ public class DungeonGenerator : MonoBehaviour
             case ORIENTATION.EAST: return new Vector2(buildingPosition.x + 1, buildingPosition.y);
             case ORIENTATION.SOUTH: return new Vector2(buildingPosition.x, buildingPosition.y - 1);
             case ORIENTATION.WEST: return new Vector2(buildingPosition.x - 1, buildingPosition.y);
-            default: return MoveIntoDirection(RandomizeBuildingDirection(buildingDirection, new List<ORIENTATION>()));
+            default: return MoveIntoDirection(RandomizeBuildingDirection(buildingDirection, new List<ORIENTATION>()), buildingPosition);
         }
     }
 
     private ORIENTATION RandomizeBuildingDirection(ORIENTATION prevBuildingDirection, List<ORIENTATION> alreadyExplored, bool fullRandom = false)
     {
-        List<ORIENTATION> directionsAvailable = directionsArray.Except(alreadyExplored).ToList();
+        List<ORIENTATION> directionsAvailable = directionsList.Except(alreadyExplored).ToList();
 
         if (prevBuildingDirection == ORIENTATION.NONE)
         {
@@ -264,6 +368,7 @@ public class DungeonGenerator : MonoBehaviour
     {
         // Check if the given position is possible
         if (mainPath.Any(x => x.position == position)
+            || secondaryPaths.SelectMany(x => x).Any(x => x.position == position)
             || exploredPositions.Any(x => x == position))
         {
             return new Tuple<bool, int>(false, depthRemaining);
