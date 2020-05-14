@@ -41,6 +41,16 @@ public class DungeonGenerator : MonoBehaviour
 
             return available;
         }
+
+        public List<ORIENTATION> GetDoorOrientations()
+        {
+            List<ORIENTATION> available = new List<ORIENTATION>();
+
+            available.AddRange(mainOrientations);
+            available.AddRange(secondaryOrientations.Keys);
+
+            return available;
+        }
     }
 
     // More than that is too heavy since we make sure the path is possible using recursion
@@ -58,6 +68,9 @@ public class DungeonGenerator : MonoBehaviour
     [SerializeField] private bool failIfTooShort = false;
     [SerializeField, Range(0f, 1f)] private float buildingDirectionChange;
 
+    [Header("Available Rooms")]
+    [SerializeField] private List<GameObject> rooms = new List<GameObject>();
+
     [Header("Debug")]
     [SerializeField, Range(0, 10)] private int debugPaddingSize = 4;
     [SerializeField] private bool printDebug = true;
@@ -67,6 +80,8 @@ public class DungeonGenerator : MonoBehaviour
 
     private readonly List<Node> mainPath = new List<Node>();
     private readonly List<List<Node>> secondaryPaths = new List<List<Node>>();
+
+    #region Monobehaviours
 
     private void Awake()
     {
@@ -85,7 +100,58 @@ public class DungeonGenerator : MonoBehaviour
     private void Start()
     {
         GenerateDungeon();
+        MaterializeDungeon();
     }
+
+    #endregion
+
+    #region Materialization
+
+    private void MaterializeDungeon()
+    {
+        foreach (Node n in mainPath)
+        {
+            GameObject r = GetCorrectRoom(n.GetDoorOrientations());
+            Vector3 realPos = ConvertNodeToWorld(n);
+            InstantiateRoom(r, realPos, n.position);
+        }
+
+        foreach (Node n in secondaryPaths.SelectMany(x => x))
+        {
+            GameObject r = GetCorrectRoom(n.GetDoorOrientations());
+            Vector3 realPos = ConvertNodeToWorld(n);
+            InstantiateRoom(r, realPos, n.position);
+        }
+    }
+
+    private Vector3 ConvertNodeToWorld(Node n)
+    {
+        // TODO : Convert node position to world position
+
+        return new Vector3();
+    }
+
+    private GameObject GetCorrectRoom(List<ORIENTATION> doors)
+    {
+        // TODO : Query and return room with correct doors
+
+        List<Room> roomComponents = new List<Room>();
+        roomComponents.AddRange(rooms.SelectMany(x => x.GetComponentsInChildren<Room>()));
+
+        // ...
+
+        return null;
+    }
+
+    private void InstantiateRoom(GameObject room, Vector3 realPos, Vector2 nodePos)
+    {
+        GameObject ga = Instantiate(room, realPos, Quaternion.identity);
+        ga.GetComponentInChildren<Room>().position = new Vector2Int((int)nodePos.x, (int)nodePos.y);
+    }
+
+    #endregion
+
+    #region Nodes Generation
 
     private void GenerateDungeon()
     {
@@ -415,6 +481,8 @@ public class DungeonGenerator : MonoBehaviour
         // No possible paths found
         return new Tuple<bool, int>(false, smallestRemainingDepth);
     }
+
+    #endregion
 
     // To get deepest room (Where to place key)
     // Also know which rooms are inside a secondary path (Check if two secondary paths lead to the same path)
