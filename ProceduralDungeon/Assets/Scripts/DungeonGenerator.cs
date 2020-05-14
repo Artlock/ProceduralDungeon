@@ -19,8 +19,8 @@ public class DungeonGenerator : MonoBehaviour
     }
 
     // More than that is too heavy since we make sure the path is possible using recursion
-    [SerializeField, Range(1, 99)] private int minPathLength = 10;
-    [SerializeField, Range(1, 99)] private int maxPathLength = 10;
+    [SerializeField, Range(10, 99)] private int minPathLength = 10;
+    [SerializeField, Range(10, 99)] private int maxPathLength = 10;
 
     [SerializeField, Range(0f, 1f)] private float buildingDirectionChange;
 
@@ -35,7 +35,6 @@ public class DungeonGenerator : MonoBehaviour
 
     private Vector2 buildingPosition;
     private ORIENTATION buildingDirection;
-    private int toBuildRemaining;
 
     private void Awake()
     {
@@ -52,34 +51,43 @@ public class DungeonGenerator : MonoBehaviour
 
     private void GenerateDungeon()
     {
+        GenerateMainPath();
+
+        // Debug printing
+        if (printDebug)
+        {
+            PrintMainPath(mainPath);
+        }
+    }
+
+    private void GenerateMainPath()
+    {
         mainPath.Clear();
         mainPathLength = Random.Range(minPathLength, maxPathLength + 1);
 
         buildingPosition = new Vector2(0, 0);
-        toBuildRemaining = mainPathLength;
+        int mainPathToBuildRemaining = mainPathLength;
 
         // First node at (0,0)
-        mainPath.Add(GenerateNode());
-        toBuildRemaining--;
+        mainPath.Add(GenerateNode(buildingPosition));
+        mainPathToBuildRemaining--;
 
-        while (toBuildRemaining > 0)
+        while (mainPathToBuildRemaining > 0)
         {
-            UpdateBuildingPosDir(toBuildRemaining);
+            // Returned int is the amount of rooms we wont be able to place anyway
+            mainPathToBuildRemaining -= UpdateBuildingPosDir(mainPathToBuildRemaining);
 
-            mainPath.Add(GenerateNode());
-            toBuildRemaining--;
+            mainPath.Add(GenerateNode(buildingPosition));
+            mainPathToBuildRemaining--;
         }
-
-        // Debug printing
-        if (printDebug) PrintMainPath();
     }
 
-    private void PrintMainPath()
+    private void PrintMainPath(List<Node> toPrint)
     {
-        int maxX = Mathf.RoundToInt(mainPath.Select(x => x.position.x).Max());
-        int maxY = Mathf.RoundToInt(mainPath.Select(x => x.position.y).Max());
-        int minX = Mathf.RoundToInt(mainPath.Select(x => x.position.x).Min());
-        int minY = Mathf.RoundToInt(mainPath.Select(x => x.position.y).Min());
+        int maxX = Mathf.RoundToInt(toPrint.Select(x => x.position.x).Max());
+        int maxY = Mathf.RoundToInt(toPrint.Select(x => x.position.y).Max());
+        int minX = Mathf.RoundToInt(toPrint.Select(x => x.position.x).Min());
+        int minY = Mathf.RoundToInt(toPrint.Select(x => x.position.y).Min());
 
         string debugString = "";
 
@@ -87,11 +95,11 @@ public class DungeonGenerator : MonoBehaviour
         {
             for (int j = minX; j <= maxX; j++)
             {
-                Node n = mainPath.FirstOrDefault(x => x.position.x == j && x.position.y == i);
+                Node n = toPrint.FirstOrDefault(x => x.position.x == j && x.position.y == i);
 
                 if (n != null)
                 {
-                    int index = mainPath.IndexOf(n);
+                    int index = toPrint.IndexOf(n);
                     string indexString = index.ToString().Trim();
 
                     if (index < 10)
@@ -110,7 +118,7 @@ public class DungeonGenerator : MonoBehaviour
 
         Debug.Log(debugString);
 
-        Debug.Log("Path length : " + mainPath.Count);
+        Debug.Log("Path length : " + toPrint.Count);
         Debug.Log("Min X : " + minX);
         Debug.Log("Max X : " + maxX);
         Debug.Log("Min Y : " + minY);
@@ -122,30 +130,68 @@ public class DungeonGenerator : MonoBehaviour
         int spaces = length - source.Length;
         int padLeft = spaces / 2 + source.Length;
         return source.PadLeft(padLeft).PadRight(length);
-
     }
 
-    private void UpdateBuildingPosDir(int toBuildRemaining)
+    private int UpdateBuildingPosDir(int toBuildRemaining)
     {
         Vector2 newBuildingPosition;
         ORIENTATION newBuildingDirection;
 
+        // Ignores already explored directions to avoid exploring one that fails twice
+        List<ORIENTATION> alreadyExploredDirections = new List<ORIENTATION>();
+        alreadyExploredDirections.Add(OppositeOrientation(buildingDirection));
+
+        // If no direction is possible for requested length pick the longest possible
+        Tuple<bool, int> result;
+        int smallestRemainingDepth = int.MaxValue;
+        ORIENTATION fallbackDirection = ORIENTATION.NONE;
+        bool fallback = false;
+
         do
         {
-            // TODO : Remove already explored directions to avoid exploring one that fails twice
-
-            newBuildingDirection = RandomizeBuildingDirection(buildingDirection);
+            newBuildingDirection = RandomizeBuildingDirection(buildingDirection, alreadyExploredDirections);
+            alreadyExploredDirections.Add(newBuildingDirection);
             newBuildingPosition = MoveIntoDirection(newBuildingDirection);
-        }
-        while (!IsPathPossible(new List<Vector2>(), newBuildingPosition, toBuildRemaining));
 
-        buildingPosition = newBuildingPosition;
-        buildingDirection = newBuildingDirection;
+            result = IsPathPossible(new List<Vector2>(), newBuildingPosition, toBuildRemaining);
+
+            if (result.Item2 < smallestRemainingDepth)
+            {
+                smallestRemainingDepth = result.Item2;
+                fallbackDirection = newBuildingDirection;
+            }
+
+            if (result.Item1)
+            {
+                break;
+            }
+
+            if (alreadyExploredDirections.Count == directionsArray.Count)
+            {
+                fallback = true;
+
+                break;
+            }
+        }
+        while (!result.Item1);
+
+        if (fallback)
+        {
+            buildingDirection = fallbackDirection;
+            buildingPosition = MoveIntoDirection(buildingDirection);
+        }
+        else
+        {
+            buildingPosition = newBuildingPosition;
+            buildingDirection = newBuildingDirection;
+        }
+
+        return smallestRemainingDepth;
     }
 
-    private Node GenerateNode()
+    private Node GenerateNode(Vector2 position)
     {
-        return new Node(buildingPosition);
+        return new Node(position);
     }
 
     private Vector2 MoveIntoDirection(ORIENTATION buildingDirection)
@@ -156,54 +202,65 @@ public class DungeonGenerator : MonoBehaviour
             case ORIENTATION.EAST: return new Vector2(buildingPosition.x + 1, buildingPosition.y);
             case ORIENTATION.SOUTH: return new Vector2(buildingPosition.x, buildingPosition.y - 1);
             case ORIENTATION.WEST: return new Vector2(buildingPosition.x - 1, buildingPosition.y);
-            default: return MoveIntoDirection(RandomizeBuildingDirection(buildingDirection));
+            default: return MoveIntoDirection(RandomizeBuildingDirection(buildingDirection, new List<ORIENTATION>()));
         }
     }
 
-    private ORIENTATION RandomizeBuildingDirection(ORIENTATION buildingDirection, bool fullRandom = false)
+    private ORIENTATION RandomizeBuildingDirection(ORIENTATION prevBuildingDirection, List<ORIENTATION> alreadyExplored, bool fullRandom = false)
     {
-        if (buildingDirection == ORIENTATION.NONE)
+        List<ORIENTATION> directionsAvailable = directionsArray.Except(alreadyExplored).ToList();
+
+        if (prevBuildingDirection == ORIENTATION.NONE)
         {
-            return directionsArray[Random.Range(1, directionsArray.Count)];
+            return directionsAvailable[Random.Range(0, directionsAvailable.Count)];
         }
 
         if (fullRandom)
-            return directionsArray[Random.Range(1, directionsArray.Count)];
+            return directionsAvailable[Random.Range(0, directionsAvailable.Count)];
         else
         {
-            if (Random.Range(0f, 100f) < buildingDirectionChange * 100f)
+            if (directionsAvailable.Count == 1)
             {
-                if (Random.Range(0f, 100f) >= 50f)
+                return directionsAvailable[0];
+            }
+            else if (directionsAvailable.FirstOrDefault(x => x == prevBuildingDirection) != ORIENTATION.NONE)
+            {
+                // Available includes same direction and turn
+                if (Random.Range(0f, 100f) < buildingDirectionChange * 100f)
                 {
-                    return AngleToOrientation(OrientationToAngle(buildingDirection) + 90f);
+                    // Random turn or only available turn
+                    List<ORIENTATION> remainingDirs = directionsAvailable.Where(x => x != prevBuildingDirection).ToList();
+                    return remainingDirs[Random.Range(0, remainingDirs.Count)];
                 }
                 else
                 {
-                    return AngleToOrientation(OrientationToAngle(buildingDirection) - 90f);
+                    // Same direction as before
+                    return prevBuildingDirection;
                 }
             }
             else
             {
-                return buildingDirection;
+                // Pick either of available at random (Only sides left)
+                return directionsAvailable[Random.Range(0, directionsAvailable.Count)];
             }
         }
     }
 
     // Only takes into account MainPath and itself for now
     // Can add more conditions/paths considered later
-    private bool IsPathPossible(List<Vector2> exploredPositions, Vector2 position, int depthRemaining)
+    private Tuple<bool, int> IsPathPossible(List<Vector2> exploredPositions, Vector2 position, int depthRemaining)
     {
         // Check if the given position is possible
         if (mainPath.Any(x => x.position == position)
             || exploredPositions.Any(x => x == position))
         {
-            return false;
+            return new Tuple<bool, int>(false, depthRemaining);
         }
 
         depthRemaining--;
         if (depthRemaining == 0)
         {
-            return true;
+            return new Tuple<bool, int>(true, depthRemaining);
         }
 
         // Deep copy since we donc want to alter the other recursions
@@ -214,28 +271,86 @@ public class DungeonGenerator : MonoBehaviour
         // After the deep copy
         exploredPositions.Add(position);
 
-        Vector2 newPos = new Vector2(position.x + 1, position.y);
-        if (IsPathPossible(exploredPositions, newPos, depthRemaining))
-        {
-            return true;
-        }
+        int smallestRemainingDepth = int.MaxValue;
+        Tuple<bool, int> result;
+        Vector2 newPos;
+
+        newPos = new Vector2(position.x + 1, position.y);
+        result = IsPathPossible(exploredPositions, newPos, depthRemaining);
+        if (result.Item2 < smallestRemainingDepth) smallestRemainingDepth = result.Item2;
+        if (result.Item1) return new Tuple<bool, int>(true, smallestRemainingDepth);
+
         newPos = new Vector2(position.x, position.y + 1);
-        if (IsPathPossible(exploredPositions, newPos, depthRemaining))
-        {
-            return true;
-        }
+        result = IsPathPossible(exploredPositions, newPos, depthRemaining);
+        if (result.Item2 < smallestRemainingDepth) smallestRemainingDepth = result.Item2;
+        if (result.Item1) return new Tuple<bool, int>(true, smallestRemainingDepth);
+
         newPos = new Vector2(position.x - 1, position.y);
-        if (IsPathPossible(exploredPositions, newPos, depthRemaining))
-        {
-            return true;
-        }
+        result = IsPathPossible(exploredPositions, newPos, depthRemaining);
+        if (result.Item2 < smallestRemainingDepth) smallestRemainingDepth = result.Item2;
+        if (result.Item1) return new Tuple<bool, int>(true, smallestRemainingDepth);
+
         newPos = new Vector2(position.x, position.y - 1);
-        if (IsPathPossible(exploredPositions, newPos, depthRemaining))
-        {
-            return true;
-        }
+        result = IsPathPossible(exploredPositions, newPos, depthRemaining);
+        if (result.Item2 < smallestRemainingDepth) smallestRemainingDepth = result.Item2;
+        if (result.Item1) return new Tuple<bool, int>(true, smallestRemainingDepth);
 
         // No possible paths found
-        return false;
+        return new Tuple<bool, int>(false, smallestRemainingDepth);
     }
+
+    // To get deepest room (Where to place key)
+    // Also know which rooms are inside a secondary path (Check if two secondary paths lead to the same path)
+    /*
+
+foreach (room in mainRooms)
+{
+    List<Room> visitedRooms = new List<Room>();
+    
+    foreach (subRoom in room.connectedSubRooms)
+    {
+        if (!visitedRooms.Contains(subRoom))
+        {
+            List<Room> subRooms = new List<Room> ();
+            Tuple<Room, int> deepestSubRoom = Explore (subRooms, subRoom, 0);
+            PlaceKey (deepestSubRoom); // Place a key at the deepest level
+            
+            foreach (room in subRooms)
+            {
+                if (!visitedRooms.Contains(room))
+                {
+                    visitedRooms.Add(room);
+                }
+            }
+        }
+    }
+}
+
+...
+
+// Method to get the deepest room
+
+Tuple<Room, int> GetDeepestRoom (List<Room> exploredRooms, Room currentRoom, int depth)
+{
+    exploredRooms.Add (currentRoom, depth);
+    
+    Tuple<Room, int> deepestRoom = new Tuple<Room, int>(currentRoom, depth);
+    
+    foreach (nextRoom in currentRoom.connectedSubRooms)
+    {
+        if (!exploredRooms.Contains(nextRoom))
+        {
+            Tuple<Room, int> tempDeepestRoom = GetDeepestRoom (exploredRooms, nextRoom, depth + 1);
+          
+            if (tempDeepestRoom.Value2 > deepestRoom.Value2)
+            {
+                deepestRoom = tempDeepestRoom;
+            }
+        }
+    }
+    
+    return deepestRoom;
+}
+
+    */
 }
