@@ -109,22 +109,24 @@ public class DungeonGenerator : MonoBehaviour
 
     private void MaterializeDungeon()
     {
-        foreach (Node n in mainPath)
+        foreach (Node node in mainPath)
         {
-            GameObject r = GetCorrectRoom(n.GetDoorOrientations());
-            Vector3 realPos = ConvertNodeToWorld(n);
-            InstantiateRoom(r, realPos, n.position);
+            GameObject prefab = GetCorrectRoom(node.GetDoorOrientations());
+            Room room = prefab.GetComponent<Room>();
+            Vector3 realPos = ConvertNodeToWorld(node, room);
+            InstantiateRoom(prefab, realPos, node.position);
         }
 
-        foreach (Node n in secondaryPaths.SelectMany(x => x))
+        foreach (Node node in secondaryPaths.SelectMany(x => x))
         {
-            GameObject r = GetCorrectRoom(n.GetDoorOrientations());
-            Vector3 realPos = ConvertNodeToWorld(n);
-            InstantiateRoom(r, realPos, n.position);
+            GameObject prefab = GetCorrectRoom(node.GetDoorOrientations());
+            Room room = prefab.GetComponent<Room>();
+            Vector3 realPos = ConvertNodeToWorld(node, room);
+            InstantiateRoom(prefab, realPos, node.position);
         }
     }
 
-    private Vector3 ConvertNodeToWorld(Node n)
+    private Vector3 ConvertNodeToWorld(Node node, Room room)
     {
         // TODO : Convert node position to world position
 
@@ -135,6 +137,8 @@ public class DungeonGenerator : MonoBehaviour
     {
         // TODO : Query and return room with correct doors
 
+        // ...
+
         List<Room> roomComponents = new List<Room>();
         roomComponents.AddRange(rooms.SelectMany(x => x.GetComponentsInChildren<Room>()));
 
@@ -143,9 +147,9 @@ public class DungeonGenerator : MonoBehaviour
         return null;
     }
 
-    private void InstantiateRoom(GameObject room, Vector3 realPos, Vector2 nodePos)
+    private void InstantiateRoom(GameObject prefab, Vector3 realPos, Vector2 nodePos)
     {
-        GameObject ga = Instantiate(room, realPos, Quaternion.identity);
+        GameObject ga = Instantiate(prefab, realPos, Quaternion.identity);
         ga.GetComponentInChildren<Room>().position = new Vector2Int((int)nodePos.x, (int)nodePos.y);
     }
 
