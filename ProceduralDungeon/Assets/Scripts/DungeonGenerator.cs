@@ -19,9 +19,15 @@ public class DungeonGenerator : MonoBehaviour
     }
 
     // More than that is too heavy since we make sure the path is possible using recursion
-    [SerializeField, Range(10, 99)] private int minPathLength = 10;
-    [SerializeField, Range(10, 99)] private int maxPathLength = 10;
+    [Header("Main Path")]
+    [SerializeField, Range(10, 99)] private int minMainPathLength = 10;
+    [SerializeField, Range(10, 99)] private int maxMainPathLength = 10;
 
+    [Header("Secondary Paths")]
+    [SerializeField, Range(1, 10)] private int minRoomsBeforeNewSecondary = 1;
+    [SerializeField, Range(1, 10)] private int maxRoomsBeforeNewSecondary = 1;
+
+    [Header("General Settings")]
     [SerializeField, Range(0f, 1f)] private float buildingDirectionChange;
 
     [Header("Debug")]
@@ -40,8 +46,14 @@ public class DungeonGenerator : MonoBehaviour
     {
         directionsArray = ((ORIENTATION[])Enum.GetValues(typeof(ORIENTATION))).ToList();
 
-        if (maxPathLength < minPathLength)
-            maxPathLength = minPathLength;
+        if (maxMainPathLength < minMainPathLength)
+            maxMainPathLength = minMainPathLength;
+
+        if (maxMainPathLength < maxRoomsBeforeNewSecondary)
+            maxMainPathLength = maxRoomsBeforeNewSecondary;
+
+        if (maxRoomsBeforeNewSecondary < minRoomsBeforeNewSecondary)
+            maxRoomsBeforeNewSecondary = minRoomsBeforeNewSecondary;
     }
 
     private void Start()
@@ -63,7 +75,7 @@ public class DungeonGenerator : MonoBehaviour
     private void GenerateMainPath()
     {
         mainPath.Clear();
-        mainPathLength = Random.Range(minPathLength, maxPathLength + 1);
+        mainPathLength = Random.Range(minMainPathLength, maxMainPathLength + 1);
 
         buildingPosition = new Vector2(0, 0);
         int mainPathToBuildRemaining = mainPathLength;
