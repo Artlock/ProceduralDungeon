@@ -80,7 +80,7 @@ public class DungeonGenerator : MonoBehaviour
 
     [Header("Debug")]
     [SerializeField, Range(0, 10)] private int debugPaddingSize = 4;
-    [SerializeField] private bool printDebug = true;
+    [SerializeField] private bool printDebug = false;
 
     // Do not change externally
     public static List<ORIENTATION> directionsList { get; private set; }
@@ -146,7 +146,7 @@ public class DungeonGenerator : MonoBehaviour
     {
         TilemapGroup tmg = room.gameObject.GetComponent<TilemapGroup>();
 
-        return tmg.Tilemaps[0].MapBounds.center + new Vector3(node.position.x * tmg.Tilemaps[0].MapBounds.extents.x, node.position.x * tmg.Tilemaps[0].MapBounds.extents.y);
+        return new Vector3(node.position.x * tmg.Tilemaps[0].MapBounds.size.x, node.position.y * tmg.Tilemaps[0].MapBounds.size.y);
     }
 
     private Room GetCorrectRoom(Node node, List<Room> possibleRooms)
@@ -154,7 +154,13 @@ public class DungeonGenerator : MonoBehaviour
         List<ORIENTATION> requiredDoorOrients = node.GetDoorOrientations();
 
         if (node.IsKeyNode)
+        {
             possibleRooms = possibleRooms.Where(x => x.GetComponentInChildren<KeyCollectible>() != null).ToList();
+        }
+        else
+        {
+            possibleRooms = possibleRooms.Where(x => x.GetComponentInChildren<KeyCollectible>() == null).ToList();
+        }
 
         possibleRooms = possibleRooms.Where(x =>
         {
@@ -235,6 +241,9 @@ public class DungeonGenerator : MonoBehaviour
                 // Tell main path we've added a secondary path by telling him he now has a secondary door
                 mainPath[currentSecondaryProgressionIndex].AddSecondaryPath(buildingDirection, secondaryPath);
 
+                // Tell secondary path of main path entry
+                secondaryPath[0].AddMainPath(OppositeOrientation(buildingDirection), mainPath[currentSecondaryProgressionIndex]);
+
                 currentSecondaryProgressionIndex += Random.Range(minRoomsBeforeNewSecondary, maxRoomsBeforeNewSecondary);
 
                 List<Node> subNodes = new List<Node>();
@@ -242,7 +251,9 @@ public class DungeonGenerator : MonoBehaviour
                 deepestSubRoom.Item1.SetKeyNode();
             }
             else
+            {
                 currentSecondaryProgressionIndex++;
+            }
         }
 
         // Debug printing
@@ -260,16 +271,20 @@ public class DungeonGenerator : MonoBehaviour
         ORIENTATION currentDir = startDir;
 
         // Returned int is the amount of rooms we wont be able to place anyway
-        Tuple<int, PossibleBuild> tuple = GetPossibleBuildAmountAndPosDir(pathToBuildRemaining, currentDir, currentPos, alreadyExploredDirs);
+        Tuple<int, PossibleBuildPosDir> tuple = GetPossibleBuildAmountAndPosDir(pathToBuildRemaining, currentDir, currentPos, alreadyExploredDirs);
 
         if (failIfTooShort && tuple.Item1 > 0)
         {
             return false;
         }
+        else
+        {
+            pathToBuildRemaining -= tuple.Item1;
+        }
 
         if (isMain)
         {
-            pathList.Add(GenerateNode(currentPos));
+            pathList.Add(new Node(currentPos));
             pathToBuildRemaining--;
         }
 
@@ -282,14 +297,19 @@ public class DungeonGenerator : MonoBehaviour
             currentPos = tuple.Item2.pos;
             currentDir = tuple.Item2.dir;
 
-            pathList.Add(GenerateNode(currentPos));
+            pathList.Add(new Node(currentPos));
 
             // Tell previous node of new door
             if (pathList.Count >= 2)
-                pathList[pathList.Count - 2].AddMainPath(currentDir, pathList[pathList.Count - 2]);
+            {
+                pathList[pathList.Count - 2].AddMainPath(currentDir, pathList[pathList.Count - 1]);
+            }
 
             // Tell new node of previous door
-            pathList[pathList.Count - 1].AddMainPath(OppositeOrientation(currentDir), pathList[pathList.Count - 1]);
+            if (pathList.Count >= 2)
+            {
+                pathList[pathList.Count - 1].AddMainPath(OppositeOrientation(currentDir), pathList[pathList.Count - 2]);
+            }
 
             pathToBuildRemaining--;
         }
@@ -297,69 +317,19 @@ public class DungeonGenerator : MonoBehaviour
         return true;
     }
 
-    private void PrintMainPath(List<Node> toPrint)
-    {
-        int maxX = Mathf.RoundToInt(toPrint.Select(x => x.position.x).Max());
-        int maxY = Mathf.RoundToInt(toPrint.Select(x => x.position.y).Max());
-        int minX = Mathf.RoundToInt(toPrint.Select(x => x.position.x).Min());
-        int minY = Mathf.RoundToInt(toPrint.Select(x => x.position.y).Min());
-
-        string debugString = "";
-
-        for (int i = maxY; i >= minY; i--)
-        {
-            for (int j = minX; j <= maxX; j++)
-            {
-                Node n = toPrint.FirstOrDefault(x => x.position.x == j && x.position.y == i);
-
-                if (n != null)
-                {
-                    int index = toPrint.IndexOf(n);
-                    string indexString = index.ToString().Trim();
-
-                    if (index < 10)
-                        indexString = "0" + indexString;
-
-                    debugString += string.Format("{0}", PadBoth(indexString, debugPaddingSize));
-                }
-                else
-                {
-                    debugString += string.Format("{0}", PadBoth("- -", debugPaddingSize));
-                }
-            }
-
-            debugString += "\n";
-        }
-
-        Debug.Log(debugString);
-
-        Debug.Log("Path length : " + toPrint.Count);
-        Debug.Log("Min X : " + minX);
-        Debug.Log("Max X : " + maxX);
-        Debug.Log("Min Y : " + minY);
-        Debug.Log("Max Y : " + maxY);
-    }
-
-    public string PadBoth(string source, int length)
-    {
-        int spaces = length - source.Length;
-        int padLeft = spaces / 2 + source.Length;
-        return source.PadLeft(padLeft).PadRight(length);
-    }
-
-    public struct PossibleBuild
+    public struct PossibleBuildPosDir
     {
         public Vector2 pos;
         public ORIENTATION dir;
 
-        public PossibleBuild(Vector2 newBuildingPosition, ORIENTATION newBuildingDirection)
+        public PossibleBuildPosDir(Vector2 newBuildingPosition, ORIENTATION newBuildingDirection)
         {
             pos = newBuildingPosition;
             dir = newBuildingDirection;
         }
     }
 
-    private Tuple<int, PossibleBuild> GetPossibleBuildAmountAndPosDir(int toBuildRemaining, ORIENTATION buildOrientPrev, Vector2 buildPosPrev, List<ORIENTATION> alreadyExploredDirections = null)
+    private Tuple<int, PossibleBuildPosDir> GetPossibleBuildAmountAndPosDir(int toBuildRemaining, ORIENTATION buildOrientPrev, Vector2 buildPosPrev, List<ORIENTATION> alreadyExploredDirections = null)
     {
         // Ignores already explored directions to avoid exploring one that fails twice
         if (alreadyExploredDirections == null)
@@ -368,9 +338,11 @@ public class DungeonGenerator : MonoBehaviour
         }
 
         alreadyExploredDirections.Add(OppositeOrientation(buildOrientPrev));
-        if (!alreadyExploredDirections.Contains(ORIENTATION.NONE)) alreadyExploredDirections.Add(ORIENTATION.NONE);
+        if (!alreadyExploredDirections.Contains(ORIENTATION.NONE))
+        {
+            alreadyExploredDirections.Add(ORIENTATION.NONE);
+        }
 
-        // If no direction is possible for requested length pick the longest possible
         Tuple<bool, int> result;
         int smallestRemainingDepth = int.MaxValue;
         ORIENTATION fallbackDirection = ORIENTATION.NONE;
@@ -407,20 +379,15 @@ public class DungeonGenerator : MonoBehaviour
         }
         while (!result.Item1);
 
+        // If no direction is possible for requested length pick the longest possible
         if (fallback)
         {
-            return new Tuple<int, PossibleBuild>(smallestRemainingDepth, new PossibleBuild(MoveIntoDirection(fallbackDirection, buildPosPrev), fallbackDirection));
+            return new Tuple<int, PossibleBuildPosDir>(smallestRemainingDepth, new PossibleBuildPosDir(MoveIntoDirection(fallbackDirection, buildPosPrev), fallbackDirection));
         }
         else
         {
-            return new Tuple<int, PossibleBuild>(smallestRemainingDepth, new PossibleBuild(newBuildingPosition, newBuildingDirection));
+            return new Tuple<int, PossibleBuildPosDir>(smallestRemainingDepth, new PossibleBuildPosDir(newBuildingPosition, newBuildingDirection));
         }
-    }
-
-    private Node GenerateNode(Vector2 position)
-    {
-        Node n = new Node(position);
-        return n;
     }
 
     private Vector2 MoveIntoDirection(ORIENTATION buildingDirection, Vector2 buildingPosition)
@@ -445,7 +412,9 @@ public class DungeonGenerator : MonoBehaviour
         }
 
         if (fullRandom)
+        {
             return directionsAvailable[Random.Range(0, directionsAvailable.Count)];
+        }
         else
         {
             if (directionsAvailable.Count == 1)
@@ -454,29 +423,23 @@ public class DungeonGenerator : MonoBehaviour
             }
             else if (directionsAvailable.FirstOrDefault(x => x == prevBuildingDirection) != ORIENTATION.NONE)
             {
-                // Available includes same direction and turn
                 if (Random.Range(0f, 100f) < buildingDirectionChange * 100f)
                 {
-                    // Random turn or only available turn
                     List<ORIENTATION> remainingDirs = directionsAvailable.Where(x => x != prevBuildingDirection).ToList();
                     return remainingDirs[Random.Range(0, remainingDirs.Count)];
                 }
                 else
                 {
-                    // Same direction as before
                     return prevBuildingDirection;
                 }
             }
             else
             {
-                // Pick either of available at random (Only sides left)
                 return directionsAvailable[Random.Range(0, directionsAvailable.Count)];
             }
         }
     }
 
-    // Only takes into account MainPath and itself for now
-    // Can add more conditions/paths considered later
     private Tuple<bool, int> IsPathPossible(List<Vector2> exploredPositions, Vector2 position, int depthRemaining)
     {
         // Check if the given position is possible
@@ -497,8 +460,7 @@ public class DungeonGenerator : MonoBehaviour
         // Happens after position check to avoid making a copy for nothing
         exploredPositions = ((Vector2[])exploredPositions.ToArray().Clone()).ToList();
 
-        // Add explored item to our list
-        // After the deep copy
+        // Add explored item to our list after copy
         exploredPositions.Add(position);
 
         int smallestRemainingDepth = int.MaxValue;
@@ -529,11 +491,6 @@ public class DungeonGenerator : MonoBehaviour
         return new Tuple<bool, int>(false, smallestRemainingDepth);
     }
 
-    #endregion
-
-    // To get deepest node (Where to place key)
-    // Also know which rooms are inside a secondary path (Check if two secondary paths are connected)
-    // Useful for circular secondary paths, but can also be used for linear ones
     private Tuple<Node, int> GetDeepestNode(List<Node> exploredNodes, Node currentNode, int depth)
     {
         exploredNodes.Add(currentNode);
@@ -555,4 +512,63 @@ public class DungeonGenerator : MonoBehaviour
 
         return deepestNode;
     }
+
+    #endregion
+
+    #region Debug
+
+    private void PrintMainPath(List<Node> toPrint)
+    {
+        int maxX = Mathf.RoundToInt(toPrint.Select(x => x.position.x).Max());
+        int maxY = Mathf.RoundToInt(toPrint.Select(x => x.position.y).Max());
+        int minX = Mathf.RoundToInt(toPrint.Select(x => x.position.x).Min());
+        int minY = Mathf.RoundToInt(toPrint.Select(x => x.position.y).Min());
+
+        string debugString = "";
+
+        for (int i = maxY; i >= minY; i--)
+        {
+            for (int j = minX; j <= maxX; j++)
+            {
+                Node n = toPrint.FirstOrDefault(x => x.position.x == j && x.position.y == i);
+
+                if (n != null)
+                {
+                    int index = toPrint.IndexOf(n);
+                    string indexString = index.ToString().Trim();
+
+                    if (index < 10)
+                    {
+
+                        indexString = "0" + indexString;
+                    }
+
+                    debugString += string.Format("{0}", PadBoth(indexString, debugPaddingSize));
+                }
+                else
+                {
+                    debugString += string.Format("{0}", PadBoth("- -", debugPaddingSize));
+                }
+            }
+
+            debugString += "\n";
+        }
+
+        Debug.Log(debugString);
+
+        Debug.Log("Path length : " + toPrint.Count);
+        Debug.Log("Min X : " + minX);
+        Debug.Log("Max X : " + maxX);
+        Debug.Log("Min Y : " + minY);
+        Debug.Log("Max Y : " + maxY);
+    }
+
+    public string PadBoth(string source, int length)
+    {
+        int spaces = length - source.Length;
+        int padLeft = spaces / 2 + source.Length;
+        return source.PadLeft(padLeft).PadRight(length);
+    }
+
+    #endregion
 }
