@@ -5,6 +5,7 @@ using UnityEngine;
 using System.Linq;
 using Random = UnityEngine.Random;
 using static Utils;
+using CreativeSpore.SuperTilemapEditor;
 
 public class DungeonGenerator : MonoBehaviour
 {
@@ -13,31 +14,32 @@ public class DungeonGenerator : MonoBehaviour
         // Do not change externally
         public Vector2 position { get; private set; }
         // Do not change externally
-        public List<ORIENTATION> mainOrientations { get; private set; } = new List<ORIENTATION>();
+        public Dictionary<ORIENTATION, Node> mainPath { get; private set; } = new Dictionary<ORIENTATION, Node>();
         // Do not change externally
-        public Dictionary<ORIENTATION, List<Node>> secondaryOrientations { get; private set; } = new Dictionary<ORIENTATION, List<Node>>();
+        public Dictionary<ORIENTATION, List<Node>> secondaryPaths { get; private set; } = new Dictionary<ORIENTATION, List<Node>>();
 
-        public Node(Vector2 buildingPosition, ORIENTATION fromOrientation)
+        public bool IsKeyNode { get; private set; }
+
+        public Node(Vector2 buildingPosition)
         {
             position = buildingPosition;
-            mainOrientations.Add(fromOrientation);
         }
 
-        public void AddMainPath(ORIENTATION orient)
+        public void AddMainPath(ORIENTATION orient, Node node)
         {
-            mainOrientations.Add(orient);
+            mainPath.Add(orient, node);
         }
 
         public void AddSecondaryPath(ORIENTATION orient, List<Node> secondaryPath)
         {
-            secondaryOrientations.Add(orient, secondaryPath);
+            secondaryPaths.Add(orient, secondaryPath);
         }
 
         public List<ORIENTATION> GetAvailableOrientations()
         {
             List<ORIENTATION> available = new List<ORIENTATION>();
 
-            available.AddRange(directionsList.Where(x => x != ORIENTATION.NONE && !mainOrientations.Contains(x) && !secondaryOrientations.Keys.Contains(x)));
+            available.AddRange(directionsList.Where(x => x != ORIENTATION.NONE && !mainPath.Keys.Contains(x) && !secondaryPaths.Keys.Contains(x)));
 
             return available;
         }
@@ -46,10 +48,15 @@ public class DungeonGenerator : MonoBehaviour
         {
             List<ORIENTATION> available = new List<ORIENTATION>();
 
-            available.AddRange(mainOrientations);
-            available.AddRange(secondaryOrientations.Keys);
+            available.AddRange(mainPath.Keys);
+            available.AddRange(secondaryPaths.Keys);
 
             return available;
+        }
+
+        public void SetKeyNode()
+        {
+            IsKeyNode = true;
         }
     }
 
@@ -69,7 +76,7 @@ public class DungeonGenerator : MonoBehaviour
     [SerializeField, Range(0f, 1f)] private float buildingDirectionChange;
 
     [Header("Available Rooms")]
-    [SerializeField] private List<GameObject> rooms = new List<GameObject>();
+    [SerializeField] private List<Room> rooms = new List<Room>();
 
     [Header("Debug")]
     [SerializeField, Range(0, 10)] private int debugPaddingSize = 4;
@@ -109,42 +116,69 @@ public class DungeonGenerator : MonoBehaviour
 
     private void MaterializeDungeon()
     {
-        foreach (Node node in mainPath)
-        {
-            GameObject prefab = GetCorrectRoom(node.GetDoorOrientations());
-            Room room = prefab.GetComponent<Room>();
-            Vector3 realPos = ConvertNodeToWorld(node, room);
-            InstantiateRoom(prefab, realPos, node.position);
-        }
+        // Select all room prefabs
+        List<Room> roomComponents = new List<Room>();
+        roomComponents.AddRange(rooms.SelectMany(x => x.GetComponentsInChildren<Room>()));
 
-        foreach (Node node in secondaryPaths.SelectMany(x => x))
+        // Recursive creation
+        MaterializeWing(mainPath, roomComponents);
+    }
+
+    private void MaterializeWing(List<Node> wing, List<Room> possibleRooms)
+    {
+        Room room;
+        Vector3 realPos;
+
+        foreach (Node node in wing)
         {
-            GameObject prefab = GetCorrectRoom(node.GetDoorOrientations());
-            Room room = prefab.GetComponent<Room>();
-            Vector3 realPos = ConvertNodeToWorld(node, room);
-            InstantiateRoom(prefab, realPos, node.position);
+            room = GetCorrectRoom(node, possibleRooms);
+            realPos = ConvertNodeToWorld(node, room);
+            InstantiateRoom(room.gameObject, realPos, node.position);
+
+            foreach (KeyValuePair<ORIENTATION, List<Node>> subPaths in node.secondaryPaths)
+            {
+                MaterializeWing(subPaths.Value, possibleRooms);
+            }
         }
     }
 
     private Vector3 ConvertNodeToWorld(Node node, Room room)
     {
-        // TODO : Convert node position to world position
+        TilemapGroup tmg = room.gameObject.GetComponent<TilemapGroup>();
 
-        return new Vector3();
+        return tmg.Tilemaps[0].MapBounds.center + new Vector3(node.position.x * tmg.Tilemaps[0].MapBounds.extents.x, node.position.x * tmg.Tilemaps[0].MapBounds.extents.y);
     }
 
-    private GameObject GetCorrectRoom(List<ORIENTATION> doors)
+    private Room GetCorrectRoom(Node node, List<Room> possibleRooms)
     {
-        // TODO : Query and return room with correct doors
+        List<ORIENTATION> requiredDoorOrients = node.GetDoorOrientations();
 
-        // ...
+        if (node.IsKeyNode)
+            possibleRooms = possibleRooms.Where(x => x.GetComponentInChildren<KeyCollectible>() != null).ToList();
 
-        List<Room> roomComponents = new List<Room>();
-        roomComponents.AddRange(rooms.SelectMany(x => x.GetComponentsInChildren<Room>()));
+        possibleRooms = possibleRooms.Where(x =>
+        {
+            List<ORIENTATION> doorOrients = x.GetComponentsInChildren<Door>().Select(y => AngleToOrientation(-y.transform.eulerAngles.z)).ToList();
 
-        // ...
+            if (doorOrients.Count == requiredDoorOrients.Count)
+            {
+                foreach (ORIENTATION ori in requiredDoorOrients)
+                {
+                    if (!doorOrients.Contains(ori))
+                    {
+                        return false;
+                    }
+                }
 
-        return null;
+                return true;
+            }
+            else
+            {
+                return false;
+            }
+        }).ToList();
+
+        return possibleRooms[Random.Range(0, possibleRooms.Count)];
     }
 
     private void InstantiateRoom(GameObject prefab, Vector3 realPos, Vector2 nodePos)
@@ -202,6 +236,10 @@ public class DungeonGenerator : MonoBehaviour
                 mainPath[currentSecondaryProgressionIndex].AddSecondaryPath(buildingDirection, secondaryPath);
 
                 currentSecondaryProgressionIndex += Random.Range(minRoomsBeforeNewSecondary, maxRoomsBeforeNewSecondary);
+
+                List<Node> subNodes = new List<Node>();
+                Tuple<Node, int> deepestSubRoom = GetDeepestNode(subNodes, secondaryPath[0], 0);
+                deepestSubRoom.Item1.SetKeyNode();
             }
             else
                 currentSecondaryProgressionIndex++;
@@ -229,9 +267,9 @@ public class DungeonGenerator : MonoBehaviour
             return false;
         }
 
-        if (!isMain)
+        if (isMain)
         {
-            pathList.Add(GenerateNode(currentPos, OppositeOrientation(currentDir)));
+            pathList.Add(GenerateNode(currentPos));
             pathToBuildRemaining--;
         }
 
@@ -244,10 +282,15 @@ public class DungeonGenerator : MonoBehaviour
             currentPos = tuple.Item2.pos;
             currentDir = tuple.Item2.dir;
 
-            // Tell previous node of new door
-            if (pathList.Count > 0) pathList[pathList.Count - 1].AddMainPath(OppositeOrientation(currentDir));
+            pathList.Add(GenerateNode(currentPos));
 
-            pathList.Add(GenerateNode(currentPos, OppositeOrientation(currentDir)));
+            // Tell previous node of new door
+            if (pathList.Count >= 2)
+                pathList[pathList.Count - 2].AddMainPath(currentDir, pathList[pathList.Count - 2]);
+
+            // Tell new node of previous door
+            pathList[pathList.Count - 1].AddMainPath(OppositeOrientation(currentDir), pathList[pathList.Count - 1]);
+
             pathToBuildRemaining--;
         }
 
@@ -374,9 +417,9 @@ public class DungeonGenerator : MonoBehaviour
         }
     }
 
-    private Node GenerateNode(Vector2 position, ORIENTATION orient)
+    private Node GenerateNode(Vector2 position)
     {
-        Node n = new Node(position, orient);
+        Node n = new Node(position);
         return n;
     }
 
@@ -488,58 +531,28 @@ public class DungeonGenerator : MonoBehaviour
 
     #endregion
 
-    // To get deepest room (Where to place key)
-    // Also know which rooms are inside a secondary path (Check if two secondary paths lead to the same path)
-    /*
-
-foreach (room in mainRooms)
-{
-    List<Room> visitedRooms = new List<Room>();
-    
-    foreach (subRoom in room.connectedSubRooms)
+    // To get deepest node (Where to place key)
+    // Also know which rooms are inside a secondary path (Check if two secondary paths are connected)
+    // Useful for circular secondary paths, but can also be used for linear ones
+    private Tuple<Node, int> GetDeepestNode(List<Node> exploredNodes, Node currentNode, int depth)
     {
-        if (!visitedRooms.Contains(subRoom))
+        exploredNodes.Add(currentNode);
+
+        Tuple<Node, int> deepestNode = new Tuple<Node, int>(currentNode, depth);
+
+        foreach (KeyValuePair<ORIENTATION, Node> kp in currentNode.mainPath)
         {
-            List<Room> subRooms = new List<Room> ();
-            Tuple<Room, int> deepestSubRoom = Explore (subRooms, subRoom, 0);
-            PlaceKey (deepestSubRoom); // Place a key at the deepest level
-            
-            foreach (room in subRooms)
+            if (!exploredNodes.Contains(kp.Value))
             {
-                if (!visitedRooms.Contains(room))
+                Tuple<Node, int> tempDeepestNode = GetDeepestNode(exploredNodes, kp.Value, depth + 1);
+
+                if (tempDeepestNode.Item2 > deepestNode.Item2)
                 {
-                    visitedRooms.Add(room);
+                    deepestNode = tempDeepestNode;
                 }
             }
         }
+
+        return deepestNode;
     }
-}
-
-...
-
-// Method to get the deepest room
-
-Tuple<Room, int> GetDeepestRoom (List<Room> exploredRooms, Room currentRoom, int depth)
-{
-    exploredRooms.Add (currentRoom, depth);
-    
-    Tuple<Room, int> deepestRoom = new Tuple<Room, int>(currentRoom, depth);
-    
-    foreach (nextRoom in currentRoom.connectedSubRooms)
-    {
-        if (!exploredRooms.Contains(nextRoom))
-        {
-            Tuple<Room, int> tempDeepestRoom = GetDeepestRoom (exploredRooms, nextRoom, depth + 1);
-          
-            if (tempDeepestRoom.Value2 > deepestRoom.Value2)
-            {
-                deepestRoom = tempDeepestRoom;
-            }
-        }
-    }
-    
-    return deepestRoom;
-}
-
-    */
 }

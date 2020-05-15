@@ -16,7 +16,6 @@ public class Door : MonoBehaviour {
 
     Utils.ORIENTATION _orientation = Utils.ORIENTATION.NONE;
 	public Utils.ORIENTATION Orientation { get { return _orientation; } }
-    public bool isOptional = false;
 
 	STATE _state = STATE.OPEN;
 	public STATE State { get { return _state; } }
