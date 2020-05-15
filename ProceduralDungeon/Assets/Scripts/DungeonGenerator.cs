@@ -1,8 +1,7 @@
 ﻿using System;
-using System.Collections;
+using System.Linq;
 using System.Collections.Generic;
 using UnityEngine;
-using System.Linq;
 using Random = UnityEngine.Random;
 using static Utils;
 using CreativeSpore.SuperTilemapEditor;
@@ -11,11 +10,8 @@ public class DungeonGenerator : MonoBehaviour
 {
     public class Node
     {
-        // Do not change externally
         public Vector2 position { get; private set; }
-        // Do not change externally
         public Dictionary<ORIENTATION, Node> mainPath { get; private set; } = new Dictionary<ORIENTATION, Node>();
-        // Do not change externally
         public Dictionary<ORIENTATION, List<Node>> secondaryPaths { get; private set; } = new Dictionary<ORIENTATION, List<Node>>();
 
         public bool IsKeyNode { get; private set; }
@@ -78,11 +74,6 @@ public class DungeonGenerator : MonoBehaviour
     [Header("Available Rooms")]
     [SerializeField] private List<Room> rooms = new List<Room>();
 
-    [Header("Debug")]
-    [SerializeField, Range(0, 10)] private int debugPaddingSize = 4;
-    [SerializeField] private bool printDebug = false;
-
-    // Do not change externally
     public static List<ORIENTATION> directionsList { get; private set; }
 
     private readonly List<Node> mainPath = new List<Node>();
@@ -254,12 +245,6 @@ public class DungeonGenerator : MonoBehaviour
             {
                 currentSecondaryProgressionIndex++;
             }
-        }
-
-        // Debug printing
-        if (printDebug)
-        {
-            PrintMainPath(mainPath);
         }
     }
 
@@ -511,63 +496,6 @@ public class DungeonGenerator : MonoBehaviour
         }
 
         return deepestNode;
-    }
-
-    #endregion
-
-    #region Debug
-
-    private void PrintMainPath(List<Node> toPrint)
-    {
-        int maxX = Mathf.RoundToInt(toPrint.Select(x => x.position.x).Max());
-        int maxY = Mathf.RoundToInt(toPrint.Select(x => x.position.y).Max());
-        int minX = Mathf.RoundToInt(toPrint.Select(x => x.position.x).Min());
-        int minY = Mathf.RoundToInt(toPrint.Select(x => x.position.y).Min());
-
-        string debugString = "";
-
-        for (int i = maxY; i >= minY; i--)
-        {
-            for (int j = minX; j <= maxX; j++)
-            {
-                Node n = toPrint.FirstOrDefault(x => x.position.x == j && x.position.y == i);
-
-                if (n != null)
-                {
-                    int index = toPrint.IndexOf(n);
-                    string indexString = index.ToString().Trim();
-
-                    if (index < 10)
-                    {
-
-                        indexString = "0" + indexString;
-                    }
-
-                    debugString += string.Format("{0}", PadBoth(indexString, debugPaddingSize));
-                }
-                else
-                {
-                    debugString += string.Format("{0}", PadBoth("- -", debugPaddingSize));
-                }
-            }
-
-            debugString += "\n";
-        }
-
-        Debug.Log(debugString);
-
-        Debug.Log("Path length : " + toPrint.Count);
-        Debug.Log("Min X : " + minX);
-        Debug.Log("Max X : " + maxX);
-        Debug.Log("Min Y : " + minY);
-        Debug.Log("Max Y : " + maxY);
-    }
-
-    public string PadBoth(string source, int length)
-    {
-        int spaces = length - source.Length;
-        int padLeft = spaces / 2 + source.Length;
-        return source.PadLeft(padLeft).PadRight(length);
     }
 
     #endregion

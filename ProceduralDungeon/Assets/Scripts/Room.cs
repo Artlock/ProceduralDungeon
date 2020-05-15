@@ -12,12 +12,10 @@ public class Room : MonoBehaviour
     private TilemapGroup _tilemapGroup;
 
     public static List<Room> allRooms = new List<Room>();
-    public Door[] doors { get; private set; }
 
     void Awake()
     {
         _tilemapGroup = GetComponentInChildren<TilemapGroup>();
-        doors = GetComponentsInChildren<Door>();
         allRooms.Add(this);
     }
 

@@ -3758,10 +3758,10 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   minMainPathLength: 10
   maxMainPathLength: 10
-  minRoomsBeforeNewSecondary: 1
-  maxRoomsBeforeNewSecondary: 1
-  minSecondaryPathLength: 5
-  maxSecondaryPathLength: 5
+  minRoomsBeforeNewSecondary: 2
+  maxRoomsBeforeNewSecondary: 4
+  minSecondaryPathLength: 3
+  maxSecondaryPathLength: 6
   failIfTooShort: 0
   buildingDirectionChange: 0.3
   rooms:
@@ -3850,8 +3850,6 @@ MonoBehaviour:
   - {fileID: 2846582477289910840, guid: 0894f1456e3eae845a15a047d2285e57, type: 3}
   - {fileID: 5928938182489263072, guid: 5b2a1c907bbcc9f44a408f5f8dbc4a7f, type: 3}
   - {fileID: 4868099309815116927, guid: d7dde729286ee49429b1a1603159b9cf, type: 3}
-  debugPaddingSize: 6
-  printDebug: 0
 --- !u!1 &2079279941 stripped
 GameObject:
   m_CorrespondingSourceObject: {fileID: 7249761477647285960, guid: 780d3c292fcda5e498755efe93cf622a,
