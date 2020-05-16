@@ -3762,9 +3762,9 @@ MonoBehaviour:
   maxRoomsBeforeNewSecondary: 4
   minSecondaryPathLength: 3
   maxSecondaryPathLength: 6
-  failIfTooShort: 0
-  buildingDirectionChange: 0.3
-  rooms:
+  failIfPossiblePathTooShort: 0
+  buildingDirectionChangeChance: 0.3
+  roomPrefabs:
   - {fileID: 2442099153762628862, guid: 0cf1d889402412a4e8ac612e840a8945, type: 3}
   - {fileID: 8696423002180365320, guid: 0a78f30bad1bf164886d0fd3d6e92ba4, type: 3}
   - {fileID: 2721078206699118454, guid: dd6d1a8ca3d6ef04b93c010a9992e185, type: 3}

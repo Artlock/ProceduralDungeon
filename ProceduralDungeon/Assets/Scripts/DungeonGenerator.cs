@@ -10,51 +10,74 @@ public class DungeonGenerator : MonoBehaviour
 {
     public class Node
     {
-        public Vector2 position { get; private set; }
-        public Dictionary<ORIENTATION, Node> mainPath { get; private set; } = new Dictionary<ORIENTATION, Node>();
-        public Dictionary<ORIENTATION, List<Node>> secondaryPaths { get; private set; } = new Dictionary<ORIENTATION, List<Node>>();
+        public Vector2 position;
+        public int pathID = 0;
+        public bool hasKey = false;
+        public List<ORIENTATION> locks = new List<ORIENTATION>();
 
-        public bool IsKeyNode { get; private set; }
+        public Dictionary<ORIENTATION, Node> doors = new Dictionary<ORIENTATION, Node>();
 
-        public Node(Vector2 buildingPosition)
+        public Node(Vector2 position, int pathID, bool hasKey)
         {
-            position = buildingPosition;
+            this.position = position;
+            this.pathID = pathID;
+            this.hasKey = hasKey;
         }
 
-        public void AddMainPath(ORIENTATION orient, Node node)
+        public void SetLocks(List<ORIENTATION> locks)
         {
-            mainPath.Add(orient, node);
-        }
-
-        public void AddSecondaryPath(ORIENTATION orient, List<Node> secondaryPath)
-        {
-            secondaryPaths.Add(orient, secondaryPath);
+            this.locks = locks;
         }
 
         public List<ORIENTATION> GetAvailableOrientations()
         {
-            List<ORIENTATION> available = new List<ORIENTATION>();
-
-            available.AddRange(directionsList.Where(x => x != ORIENTATION.NONE && !mainPath.Keys.Contains(x) && !secondaryPaths.Keys.Contains(x)));
-
-            return available;
+            return existingDirections.Where(x => !doors.Keys.Contains(x)).ToList();
         }
 
-        public List<ORIENTATION> GetDoorOrientations()
+        public List<ORIENTATION> GetOrientationsWithDoors()
         {
-            List<ORIENTATION> available = new List<ORIENTATION>();
-
-            available.AddRange(mainPath.Keys);
-            available.AddRange(secondaryPaths.Keys);
-
-            return available;
+            return doors.Keys.ToList();
         }
 
-        public void SetKeyNode()
+        public List<ORIENTATION> GetOrientationsWithoutDoors()
         {
-            IsKeyNode = true;
+            return existingDirections.Except(doors.Keys.ToList()).ToList();
+        }
+
+        public List<Node> GetConnectedNodes()
+        {
+            return doors.Select(x => x.Value).ToList();
+        }
+
+        public List<Node> GetConnectedNodes_SamePath()
+        {
+            return doors.Where(x => x.Value.pathID == pathID).Select(x => x.Value).ToList();
+        }
+
+        public List<Node> GetConnectedNodes_DifferentPath()
+        {
+            return doors.Where(x => x.Value.pathID != pathID).Select(x => x.Value).ToList();
+        }
+
+        public List<Node> GetConnectedNodes_SpecificPath(int pathID)
+        {
+            return doors.Where(x => x.Value.pathID == pathID).Select(x => x.Value).ToList();
         }
     }
+
+    public struct PossibleBuild
+    {
+        public Vector2 newPos;
+        public ORIENTATION dirToGetThere;
+
+        public PossibleBuild(Vector2 newPos, ORIENTATION dirToGetThere)
+        {
+            this.newPos = newPos;
+            this.dirToGetThere = dirToGetThere;
+        }
+    }
+
+    #region Parameters
 
     // More than that is too heavy since we make sure the path is possible using recursion
     [Header("Main Path")]
@@ -68,22 +91,26 @@ public class DungeonGenerator : MonoBehaviour
     [SerializeField, Range(2, 10)] private int maxSecondaryPathLength = 5;
 
     [Header("General Settings")]
-    [SerializeField] private bool failIfTooShort = false;
-    [SerializeField, Range(0f, 1f)] private float buildingDirectionChange;
+    [SerializeField] private bool failIfPossiblePathTooShort = false;
+    [SerializeField, Range(0f, 1f)] private float buildingDirectionChangeChance = 0.3f;
 
     [Header("Available Rooms")]
-    [SerializeField] private List<Room> rooms = new List<Room>();
+    [SerializeField] private List<Room> roomPrefabs = new List<Room>();
 
-    public static List<ORIENTATION> directionsList { get; private set; }
+    public static List<ORIENTATION> existingDirections;
+    public static List<ORIENTATION> existingDirectionsFull;
 
-    private readonly List<Node> mainPath = new List<Node>();
-    private readonly List<List<Node>> secondaryPaths = new List<List<Node>>();
+    private readonly List<Node> nodes = new List<Node>();
+    private readonly Dictionary<int, List<Node>> paths = new Dictionary<int, List<Node>>();
+
+    #endregion
 
     #region Monobehaviours
 
     private void Awake()
     {
-        directionsList = ((ORIENTATION[])Enum.GetValues(typeof(ORIENTATION))).ToList();
+        existingDirections = ((ORIENTATION[])Enum.GetValues(typeof(ORIENTATION))).Where(x => x != ORIENTATION.NONE).ToList();
+        existingDirectionsFull = ((ORIENTATION[])Enum.GetValues(typeof(ORIENTATION))).ToList();
 
         if (maxMainPathLength < minMainPathLength)
             maxMainPathLength = minMainPathLength;
@@ -98,73 +125,56 @@ public class DungeonGenerator : MonoBehaviour
     private void Start()
     {
         GenerateDungeon();
-        MaterializeDungeon();
+        MaterializeDungeon(roomPrefabs.Select(x => x.GetComponentInChildren<Room>()).ToList());
     }
 
     #endregion
 
     #region Materialization
 
-    private void MaterializeDungeon()
+    private void MaterializeDungeon(List<Room> possibleRooms)
     {
-        // Select all room prefabs
-        List<Room> roomComponents = new List<Room>();
-        roomComponents.AddRange(rooms.SelectMany(x => x.GetComponentsInChildren<Room>()));
-
-        // Recursive creation
-        MaterializeWing(mainPath, roomComponents);
-    }
-
-    private void MaterializeWing(List<Node> wing, List<Room> possibleRooms)
-    {
-        Room room;
-        Vector3 realPos;
-
-        foreach (Node node in wing)
+        foreach(Node node in nodes)
         {
-            room = GetCorrectRoom(node, possibleRooms);
-            realPos = ConvertNodeToWorld(node, room);
-            InstantiateRoom(room.gameObject, realPos, node.position);
-
-            foreach (KeyValuePair<ORIENTATION, List<Node>> subPaths in node.secondaryPaths)
-            {
-                MaterializeWing(subPaths.Value, possibleRooms);
-            }
+            Room room = GetFittingRoom(node, possibleRooms);
+            Vector3 roomPosition = NodeToWorldPosition(node, room);
+            InstantiateRoom(room.gameObject, roomPosition, node.position);
         }
     }
 
-    private Vector3 ConvertNodeToWorld(Node node, Room room)
+    private Vector3 NodeToWorldPosition(Node node, Room room)
     {
         TilemapGroup tmg = room.gameObject.GetComponent<TilemapGroup>();
-
         return new Vector3(node.position.x * tmg.Tilemaps[0].MapBounds.size.x, node.position.y * tmg.Tilemaps[0].MapBounds.size.y);
     }
 
-    private Room GetCorrectRoom(Node node, List<Room> possibleRooms)
+    private void InstantiateRoom(GameObject prefab, Vector3 realPos, Vector2 nodePos)
     {
-        List<ORIENTATION> requiredDoorOrients = node.GetDoorOrientations();
+        GameObject ga = Instantiate(prefab, realPos, Quaternion.identity);
+        ga.GetComponentInChildren<Room>().position = new Vector2Int((int)nodePos.x, (int)nodePos.y);
+    }
 
-        if (node.IsKeyNode)
-        {
+    private Room GetFittingRoom(Node node, List<Room> possibleRooms)
+    {
+        List<ORIENTATION> requiredDoorOrients = node.GetOrientationsWithDoors();
+
+        // Key state sorting
+        if (node.hasKey)
             possibleRooms = possibleRooms.Where(x => x.GetComponentInChildren<KeyCollectible>() != null).ToList();
-        }
         else
-        {
             possibleRooms = possibleRooms.Where(x => x.GetComponentInChildren<KeyCollectible>() == null).ToList();
-        }
 
+        // Door position sorting
         possibleRooms = possibleRooms.Where(x =>
         {
-            List<ORIENTATION> doorOrients = x.GetComponentsInChildren<Door>().Select(y => AngleToOrientation(-y.transform.eulerAngles.z)).ToList();
+            List<ORIENTATION> availableDoorOrients = x.GetComponentsInChildren<Door>().Select(y => AngleToOrientation(-y.transform.eulerAngles.z)).ToList();
 
-            if (doorOrients.Count == requiredDoorOrients.Count)
+            if (availableDoorOrients.Count == requiredDoorOrients.Count)
             {
                 foreach (ORIENTATION ori in requiredDoorOrients)
                 {
-                    if (!doorOrients.Contains(ori))
-                    {
+                    if (!availableDoorOrients.Contains(ori))
                         return false;
-                    }
                 }
 
                 return true;
@@ -175,13 +185,27 @@ public class DungeonGenerator : MonoBehaviour
             }
         }).ToList();
 
-        return possibleRooms[Random.Range(0, possibleRooms.Count)];
-    }
+        // Lock position sorting
+        if (node.locks.Count == 0)
+            possibleRooms = possibleRooms.Where(x => x.GetComponentsInChildren<Door>().All(y => y.State == Door.STATE.OPEN)).ToList();
+        else
+            possibleRooms = possibleRooms.Where(x =>
+            {
+                bool correctDoors = true;
 
-    private void InstantiateRoom(GameObject prefab, Vector3 realPos, Vector2 nodePos)
-    {
-        GameObject ga = Instantiate(prefab, realPos, Quaternion.identity);
-        ga.GetComponentInChildren<Room>().position = new Vector2Int((int)nodePos.x, (int)nodePos.y);
+                x.GetComponentsInChildren<Door>().ToList().ForEach(y =>
+                {
+                    if (node.locks.Contains(y.Orientation) && y.State != Door.STATE.CLOSED)
+                        correctDoors = false;
+                    else if (!node.locks.Contains(y.Orientation) && y.State != Door.STATE.OPEN)
+                        correctDoors = false;
+                });
+
+                return correctDoors;
+
+            }).ToList();
+
+        return possibleRooms[Random.Range(0, possibleRooms.Count)];
     }
 
     #endregion
@@ -192,173 +216,152 @@ public class DungeonGenerator : MonoBehaviour
     {
         // Main path generation
 
-        mainPath.Clear();
         int mainPathLength = Random.Range(minMainPathLength, maxMainPathLength + 1);
 
         Vector3 buildingPosition = new Vector2(0, 0);
         ORIENTATION buildingDirection = ORIENTATION.NONE;
 
-        bool success = GeneratePath(true, mainPath, mainPathLength, buildingPosition, buildingDirection);
+        Node firstNode = new Node(buildingPosition, 0, false);
 
-        if (!success) Debug.LogError("Main path failed. Everying stopped");
+        // Add to nodes list
+        nodes.Add(firstNode);
+
+        // Add to dictionary of paths
+        if (!paths.ContainsKey(0))
+            paths.Add(0, new List<Node>());
+        paths[0].Add(firstNode);
+
+        bool success = GeneratePath(0, mainPathLength, buildingPosition, buildingDirection);
+
+        if (!success) Debug.LogError("Main path failed. Everything stopped");
 
         // Secondary paths generation
 
-        int currentSecondaryProgressionIndex = Random.Range(minRoomsBeforeNewSecondary, maxRoomsBeforeNewSecondary);
+        int secondaryPathsCount = 0;
+        int progressionIndex = Random.Range(minRoomsBeforeNewSecondary, maxRoomsBeforeNewSecondary);
 
-        while (currentSecondaryProgressionIndex < mainPath.Count)
+        while (progressionIndex < paths[0].Count)
         {
-            List<ORIENTATION> availableOrientations = mainPath[currentSecondaryProgressionIndex].GetAvailableOrientations();
+            List<ORIENTATION> availableOrientations = paths[0][progressionIndex].GetAvailableOrientations();
 
             if (availableOrientations.Count == 0)
             {
-                currentSecondaryProgressionIndex++;
-
+                progressionIndex++;
                 continue;
             }
 
-            List<Node> secondaryPath = new List<Node>();
             int secondaryPathLength = Random.Range(minSecondaryPathLength, maxSecondaryPathLength + 1);
 
-            buildingPosition = mainPath[currentSecondaryProgressionIndex].position;
+            buildingPosition = paths[0][progressionIndex].position;
             buildingDirection = availableOrientations[Random.Range(0, availableOrientations.Count)];
 
-            success = GeneratePath(false, secondaryPath, secondaryPathLength, buildingPosition, buildingDirection, directionsList.Where(x => !availableOrientations.Contains(x)).ToList());
+            success = GeneratePath(secondaryPathsCount + 1, secondaryPathLength, buildingPosition, buildingDirection);
 
             if (success)
-            {
-                secondaryPaths.Add(secondaryPath);
-
-                // Tell main path we've added a secondary path by telling him he now has a secondary door
-                mainPath[currentSecondaryProgressionIndex].AddSecondaryPath(buildingDirection, secondaryPath);
-
-                // Tell secondary path of main path entry
-                secondaryPath[0].AddMainPath(OppositeOrientation(buildingDirection), mainPath[currentSecondaryProgressionIndex]);
-
-                currentSecondaryProgressionIndex += Random.Range(minRoomsBeforeNewSecondary, maxRoomsBeforeNewSecondary);
-
-                List<Node> subNodes = new List<Node>();
-                Tuple<Node, int> deepestSubRoom = GetDeepestNode(subNodes, secondaryPath[0], 0);
-                deepestSubRoom.Item1.SetKeyNode();
-            }
+                progressionIndex += Random.Range(minRoomsBeforeNewSecondary, maxRoomsBeforeNewSecondary);
             else
-            {
-                currentSecondaryProgressionIndex++;
-            }
+                progressionIndex++;
         }
     }
 
-    private bool GeneratePath(bool isMain, List<Node> pathList, int pathLength, Vector2 startPos, ORIENTATION startDir, List<ORIENTATION> alreadyExploredDirs = null)
+    // Can only generate linear paths possibly connected to a parent path
+    private bool GeneratePath(int pathID, int pathLength, Vector2 startPos, ORIENTATION startDir)
     {
         int pathToBuildRemaining = pathLength;
 
         Vector2 currentPos = startPos;
         ORIENTATION currentDir = startDir;
 
+        // This can be null
+        Node buildFromNode = nodes.FirstOrDefault(x => x.position == currentPos);
+
         // Returned int is the amount of rooms we wont be able to place anyway
-        Tuple<int, PossibleBuildPosDir> tuple = GetPossibleBuildAmountAndPosDir(pathToBuildRemaining, currentDir, currentPos, alreadyExploredDirs);
+        Tuple<PossibleBuild, int> tuple = GetPossibleBuild(pathToBuildRemaining, currentDir, currentPos, buildFromNode?.GetOrientationsWithoutDoors());
 
-        if (failIfTooShort && tuple.Item1 > 0)
+        if (tuple.Item2 > 0)
         {
-            return false;
-        }
-        else
-        {
-            pathToBuildRemaining -= tuple.Item1;
-        }
-
-        if (isMain)
-        {
-            pathList.Add(new Node(currentPos));
-            pathToBuildRemaining--;
+            if (failIfPossiblePathTooShort)
+            {
+                return false;
+            }
+            else
+            {
+                // Remove amount of rooms we wont be able to build
+                pathToBuildRemaining -= tuple.Item2;
+            }
         }
 
         while (pathToBuildRemaining > 0)
         {
-            // Returned int is the amount of rooms we wont be able to place anyway
-            tuple = GetPossibleBuildAmountAndPosDir(pathToBuildRemaining, currentDir, currentPos);
-            pathToBuildRemaining -= tuple.Item1;
-
-            currentPos = tuple.Item2.pos;
-            currentDir = tuple.Item2.dir;
-
-            pathList.Add(new Node(currentPos));
-
-            // Tell previous node of new door
-            if (pathList.Count >= 2)
-            {
-                pathList[pathList.Count - 2].AddMainPath(currentDir, pathList[pathList.Count - 1]);
-            }
-
-            // Tell new node of previous door
-            if (pathList.Count >= 2)
-            {
-                pathList[pathList.Count - 1].AddMainPath(OppositeOrientation(currentDir), pathList[pathList.Count - 2]);
-            }
-
             pathToBuildRemaining--;
+
+            buildFromNode = nodes.FirstOrDefault(x => x.position == currentPos);
+
+            // Returned int is the amount of rooms we wont be able to place anyway
+            tuple = GetPossibleBuild(pathToBuildRemaining, currentDir, currentPos, buildFromNode?.GetOrientationsWithoutDoors());
+
+            currentPos = tuple.Item1.newPos;
+            currentDir = tuple.Item1.dirToGetThere;
+
+            Node newNode = new Node(currentPos, pathID, pathToBuildRemaining == 0 && pathID != 0);
+
+            // Add to nodes list
+            nodes.Add(newNode);
+
+            // Add to dictionary of paths
+            if (!paths.ContainsKey(pathID))
+                paths.Add(pathID, new List<Node>());
+            paths[pathID].Add(newNode);
+
+            if (buildFromNode != null)
+            {
+                buildFromNode.doors.Add(currentDir, newNode);
+                newNode.doors.Add(OppositeOrientation(currentDir), buildFromNode);
+            }
         }
 
         return true;
     }
 
-    public struct PossibleBuildPosDir
+    private Tuple<PossibleBuild, int> GetPossibleBuild(int toBuildLeft, ORIENTATION previousDirection, Vector2 previousPosition, List<ORIENTATION> available)
     {
-        public Vector2 pos;
-        public ORIENTATION dir;
-
-        public PossibleBuildPosDir(Vector2 newBuildingPosition, ORIENTATION newBuildingDirection)
-        {
-            pos = newBuildingPosition;
-            dir = newBuildingDirection;
-        }
-    }
-
-    private Tuple<int, PossibleBuildPosDir> GetPossibleBuildAmountAndPosDir(int toBuildRemaining, ORIENTATION buildOrientPrev, Vector2 buildPosPrev, List<ORIENTATION> alreadyExploredDirections = null)
-    {
-        // Ignores already explored directions to avoid exploring one that fails twice
-        if (alreadyExploredDirections == null)
-        {
-            alreadyExploredDirections = new List<ORIENTATION>();
-        }
-
-        alreadyExploredDirections.Add(OppositeOrientation(buildOrientPrev));
-        if (!alreadyExploredDirections.Contains(ORIENTATION.NONE))
-        {
-            alreadyExploredDirections.Add(ORIENTATION.NONE);
-        }
+        List<ORIENTATION> directionsAvailable = available != null ? available : existingDirections.ToList();
+        // Ignore direction we built from before
+        directionsAvailable.Remove(OppositeOrientation(previousDirection));
 
         Tuple<bool, int> result;
         int smallestRemainingDepth = int.MaxValue;
-        ORIENTATION fallbackDirection = ORIENTATION.NONE;
-        bool fallback = false;
 
-        Vector2 newBuildingPosition;
-        ORIENTATION newBuildingDirection;
+        bool fallback = false;
+        Vector2 fallbackPosition = new Vector2();
+        ORIENTATION fallbackDirection = ORIENTATION.NONE;
+
+        Vector2 newPosition;
+        ORIENTATION newDirection;
 
         do
         {
-            newBuildingDirection = RandomizeBuildingDirection(buildOrientPrev, alreadyExploredDirections);
-            alreadyExploredDirections.Add(newBuildingDirection);
-            newBuildingPosition = MoveIntoDirection(newBuildingDirection, buildPosPrev);
+            newDirection = RandomizeDirection(previousDirection, directionsAvailable);
+            newPosition = MoveIntoDirection(newDirection, previousPosition);
 
-            result = IsPathPossible(new List<Vector2>(), newBuildingPosition, toBuildRemaining);
+            directionsAvailable.Remove(newDirection);
+
+            result = IsCellAvailable(new List<Vector2>(), newPosition, toBuildLeft);
 
             if (result.Item2 < smallestRemainingDepth)
             {
                 smallestRemainingDepth = result.Item2;
-                fallbackDirection = newBuildingDirection;
+
+                fallbackDirection = newDirection;
+                fallbackPosition = newPosition;
             }
 
             if (result.Item1)
-            {
                 break;
-            }
 
-            if (alreadyExploredDirections.Count == directionsList.Count)
+            if (directionsAvailable.Count == 0)
             {
                 fallback = true;
-
                 break;
             }
         }
@@ -366,80 +369,71 @@ public class DungeonGenerator : MonoBehaviour
 
         // If no direction is possible for requested length pick the longest possible
         if (fallback)
-        {
-            return new Tuple<int, PossibleBuildPosDir>(smallestRemainingDepth, new PossibleBuildPosDir(MoveIntoDirection(fallbackDirection, buildPosPrev), fallbackDirection));
-        }
+            return new Tuple<PossibleBuild, int>(new PossibleBuild(fallbackPosition, fallbackDirection), smallestRemainingDepth);
         else
-        {
-            return new Tuple<int, PossibleBuildPosDir>(smallestRemainingDepth, new PossibleBuildPosDir(newBuildingPosition, newBuildingDirection));
-        }
+            return new Tuple<PossibleBuild, int>(new PossibleBuild(newPosition, newDirection), 0);
     }
 
-    private Vector2 MoveIntoDirection(ORIENTATION buildingDirection, Vector2 buildingPosition)
+    // Not real random but rather same direction as before or a chance to turn 90 degrees
+    // Unless we are fed a ORIENTATION.NONE in which case the result can be anything available
+    // If nothing is available returns ORIENTATION.NONE
+    private ORIENTATION RandomizeDirection(ORIENTATION previousDirection, List<ORIENTATION> available)
     {
-        switch (buildingDirection)
-        {
-            case ORIENTATION.NORTH: return new Vector2(buildingPosition.x, buildingPosition.y + 1);
-            case ORIENTATION.EAST: return new Vector2(buildingPosition.x + 1, buildingPosition.y);
-            case ORIENTATION.SOUTH: return new Vector2(buildingPosition.x, buildingPosition.y - 1);
-            case ORIENTATION.WEST: return new Vector2(buildingPosition.x - 1, buildingPosition.y);
-            default: return MoveIntoDirection(RandomizeBuildingDirection(buildingDirection, new List<ORIENTATION>()), buildingPosition);
-        }
-    }
+        List<ORIENTATION> directionsAvailable = available;
+        // Ignore direction we built from before
+        directionsAvailable.Remove(OppositeOrientation(previousDirection));
 
-    private ORIENTATION RandomizeBuildingDirection(ORIENTATION prevBuildingDirection, List<ORIENTATION> alreadyExplored, bool fullRandom = false)
-    {
-        List<ORIENTATION> directionsAvailable = directionsList.Except(alreadyExplored).ToList();
-
-        if (prevBuildingDirection == ORIENTATION.NONE)
-        {
+        // Default behaviours
+        if (directionsAvailable.Count == 0)
+            return ORIENTATION.NONE; // Fail (Manage on the other side)
+        if (previousDirection == ORIENTATION.NONE)
             return directionsAvailable[Random.Range(0, directionsAvailable.Count)];
-        }
 
-        if (fullRandom)
+        // 1-3 directions possible onwards (forward/left/right)
+
+        // Generate turns from our previous direction
+        List<ORIENTATION> sidesAvailable = new List<ORIENTATION>();
+        sidesAvailable.Add(AngleToOrientation(OrientationToAngle(previousDirection) + 90f)); // Right
+        sidesAvailable.Add(AngleToOrientation(OrientationToAngle(previousDirection) - 90f)); // Left
+
+        // Only keep available sides
+        sidesAvailable = sidesAvailable.Where(x => directionsAvailable.Contains(x)).ToList();
+
+        if (sidesAvailable.Count == 0)
+            return previousDirection; // Has to be the only one remaining
+        else if (directionsAvailable.Contains(previousDirection))
         {
-            return directionsAvailable[Random.Range(0, directionsAvailable.Count)];
-        }
-        else
-        {
-            if (directionsAvailable.Count == 1)
-            {
-                return directionsAvailable[0];
-            }
-            else if (directionsAvailable.FirstOrDefault(x => x == prevBuildingDirection) != ORIENTATION.NONE)
-            {
-                if (Random.Range(0f, 100f) < buildingDirectionChange * 100f)
-                {
-                    List<ORIENTATION> remainingDirs = directionsAvailable.Where(x => x != prevBuildingDirection).ToList();
-                    return remainingDirs[Random.Range(0, remainingDirs.Count)];
-                }
-                else
-                {
-                    return prevBuildingDirection;
-                }
-            }
+            // 0-2 sides and forward remaining
+
+            if (Random.Range(0f, 100f) < buildingDirectionChangeChance * 100f)
+                return sidesAvailable[Random.Range(0, sidesAvailable.Count)];
             else
-            {
-                return directionsAvailable[Random.Range(0, directionsAvailable.Count)];
-            }
+                return previousDirection;
+        }
+        else
+            return sidesAvailable[Random.Range(0, sidesAvailable.Count)]; // 0-2 sides remaining
+    }
+
+    private Vector2 MoveIntoDirection(ORIENTATION direction, Vector2 startPosition)
+    {
+        switch (direction)
+        {
+            case ORIENTATION.NORTH: return new Vector2(startPosition.x, startPosition.y + 1);
+            case ORIENTATION.EAST: return new Vector2(startPosition.x + 1, startPosition.y);
+            case ORIENTATION.SOUTH: return new Vector2(startPosition.x, startPosition.y - 1);
+            case ORIENTATION.WEST: return new Vector2(startPosition.x - 1, startPosition.y);
+            default: return MoveIntoDirection(RandomizeDirection(direction, new List<ORIENTATION>()), startPosition);
         }
     }
 
-    private Tuple<bool, int> IsPathPossible(List<Vector2> exploredPositions, Vector2 position, int depthRemaining)
+    private Tuple<bool, int> IsCellAvailable(List<Vector2> exploredPositions, Vector2 position, int depthRemaining)
     {
         // Check if the given position is possible
-        if (mainPath.Any(x => x.position == position)
-            || secondaryPaths.SelectMany(x => x).Any(x => x.position == position)
-            || exploredPositions.Any(x => x == position))
-        {
-            return new Tuple<bool, int>(false, depthRemaining);
-        }
+        if (nodes.Any(x => x.position == position) || exploredPositions.Any(x => x == position))
+            return new Tuple<bool, int>(false, depthRemaining + 1);
 
-        depthRemaining--;
         if (depthRemaining == 0)
-        {
             return new Tuple<bool, int>(true, depthRemaining);
-        }
 
         // Deep copy since we donc want to alter the other recursions
         // Happens after position check to avoid making a copy for nothing
@@ -453,22 +447,22 @@ public class DungeonGenerator : MonoBehaviour
         Vector2 newPos;
 
         newPos = new Vector2(position.x + 1, position.y);
-        result = IsPathPossible(exploredPositions, newPos, depthRemaining);
+        result = IsCellAvailable(exploredPositions, newPos, depthRemaining - 1);
         if (result.Item2 < smallestRemainingDepth) smallestRemainingDepth = result.Item2;
         if (result.Item1) return new Tuple<bool, int>(true, smallestRemainingDepth);
 
         newPos = new Vector2(position.x, position.y + 1);
-        result = IsPathPossible(exploredPositions, newPos, depthRemaining);
+        result = IsCellAvailable(exploredPositions, newPos, depthRemaining - 1);
         if (result.Item2 < smallestRemainingDepth) smallestRemainingDepth = result.Item2;
         if (result.Item1) return new Tuple<bool, int>(true, smallestRemainingDepth);
 
         newPos = new Vector2(position.x - 1, position.y);
-        result = IsPathPossible(exploredPositions, newPos, depthRemaining);
+        result = IsCellAvailable(exploredPositions, newPos, depthRemaining - 1);
         if (result.Item2 < smallestRemainingDepth) smallestRemainingDepth = result.Item2;
         if (result.Item1) return new Tuple<bool, int>(true, smallestRemainingDepth);
 
         newPos = new Vector2(position.x, position.y - 1);
-        result = IsPathPossible(exploredPositions, newPos, depthRemaining);
+        result = IsCellAvailable(exploredPositions, newPos, depthRemaining - 1);
         if (result.Item2 < smallestRemainingDepth) smallestRemainingDepth = result.Item2;
         if (result.Item1) return new Tuple<bool, int>(true, smallestRemainingDepth);
 
@@ -476,26 +470,27 @@ public class DungeonGenerator : MonoBehaviour
         return new Tuple<bool, int>(false, smallestRemainingDepth);
     }
 
-    private Tuple<Node, int> GetDeepestNode(List<Node> exploredNodes, Node currentNode, int depth)
+    // Gets the deepest node of a specific path starting at a specific point (call with a 0 depth param)
+    private Tuple<Node, int> GetDeepestNode(Node currentNode, List<Node> exploredNodes, int pathID, int depth)
     {
         exploredNodes.Add(currentNode);
 
-        Tuple<Node, int> deepestNode = new Tuple<Node, int>(currentNode, depth);
+        Tuple<Node, int> deepestNodeDepth = new Tuple<Node, int>(currentNode, depth);
 
-        foreach (KeyValuePair<ORIENTATION, Node> kp in currentNode.mainPath)
+        foreach (Node node in currentNode.GetConnectedNodes_SpecificPath(pathID))
         {
-            if (!exploredNodes.Contains(kp.Value))
+            if (!exploredNodes.Contains(node))
             {
-                Tuple<Node, int> tempDeepestNode = GetDeepestNode(exploredNodes, kp.Value, depth + 1);
+                Tuple<Node, int> tempDeepestNode = GetDeepestNode(node, ((Node[])exploredNodes.ToArray().Clone()).ToList(), pathID, depth + 1);
 
-                if (tempDeepestNode.Item2 > deepestNode.Item2)
+                if (tempDeepestNode.Item2 > deepestNodeDepth.Item2)
                 {
-                    deepestNode = tempDeepestNode;
+                    deepestNodeDepth = tempDeepestNode;
                 }
             }
         }
 
-        return deepestNode;
+        return deepestNodeDepth;
     }
 
     #endregion
